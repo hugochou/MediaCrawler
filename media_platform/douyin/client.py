@@ -13,7 +13,8 @@ import asyncio
 import copy
 import json
 import urllib.parse
-from typing import Any, Callable, Dict, Optional
+from datetime import datetime
+from typing import Any, Callable, Dict, Optional, List
 
 import requests
 from playwright.async_api import BrowserContext
@@ -306,18 +307,135 @@ class DOUYINClient(AbstractApiClient):
         }
         return await self.get(uri, params)
 
-    async def get_all_user_aweme_posts(self, sec_user_id: str, callback: Optional[Callable] = None):
+    # async def get_all_user_aweme_posts(self, sec_user_id: str, callback: Optional[Callable] = None):
+    #     posts_has_more = 1
+    #     max_cursor = ""
+    #     result = []
+    #     while posts_has_more == 1:
+    #         aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
+    #         posts_has_more = aweme_post_res.get("has_more", 0)
+    #         max_cursor = aweme_post_res.get("max_cursor")
+    #         aweme_list = aweme_post_res.get("aweme_list") if aweme_post_res.get("aweme_list") else []
+    #         utils.logger.info(
+    #             f"[DOUYINClient.get_all_user_aweme_posts] got sec_user_id:{sec_user_id} video len : {len(aweme_list)}")
+    #         if callback:
+    #             await callback(aweme_list)
+    #         result.extend(aweme_list)
+    #     return result
+    async def get_all_user_aweme_posts(self,
+                                       sec_user_id: str,
+                                       callback: Optional[Callable] = None,
+                                       max_notes_count: int = 0,
+                                       target_timestamp: Optional[int] = None
+                                       ) -> List[Dict]:
+        """
+        Get all user aweme posts by sec_user_id
+        Args:
+            sec_user_id: user id
+            callback: callback function
+            max_notes_count: 最大爬取视频数量，0表示不限制 (如果target_timestamp设置，此参数将被忽略)
+            target_timestamp: 目标日期（Unix时间戳）。程序会爬取该日期（含）之后发布的视频。
+                              当出现非置顶视频在指定日期后发布，之后再出现视频在指定日期前发布时，将停止请求新的页面。
+                              置顶视频即使发布时间早于目标日期，也会被跳过，但不触发停止条件。
+        """
         posts_has_more = 1
         max_cursor = ""
-        result = []
+        result = []  # 累计所有符合条件的视频
+        current_crawl_count = 0
+ 
+        # 新增的两个状态变量
+        has_seen_new_video_this_user: bool = False  # 标志是否已见过日期符合的视频
+        num_videos_processed_this_user: int = 0    # 统计已处理的视频总数（包括跳过的）
+        # 假设最多3个置顶视频，设置一个略大于3的阈值，例如4，以确保跳过所有可能的置顶视频。
+        STOP_THRESHOLD_FOR_INFERRED_PINNED_VIDEOS: int = 4
+ 
         while posts_has_more == 1:
+            # 只有当没有设置 target_timestamp 时，才检查 max_notes_count
+            if target_timestamp is None and max_notes_count > 0 and current_crawl_count >= max_notes_count:
+                utils.logger.info(f"[DOUYINClient] Reached max notes count limit ({max_notes_count}) for user {sec_user_id}. Stopping new requests.")
+                break
+ 
             aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
             posts_has_more = aweme_post_res.get("has_more", 0)
-            max_cursor = aweme_post_res.get("max_cursor")
+            next_max_cursor = aweme_post_res.get("max_cursor")
             aweme_list = aweme_post_res.get("aweme_list") if aweme_post_res.get("aweme_list") else []
-            utils.logger.info(
-                f"[DOUYINClient.get_all_user_aweme_posts] got sec_user_id:{sec_user_id} video len : {len(aweme_list)}")
+ 
+            if not aweme_list:
+                utils.logger.info(f"[DOUYINClient] No more aweme_list for user {sec_user_id} in current response.")
+                # 如果当前批次没有视频，但 has_more 仍为1，且游标未变，则可能已无更多内容，强制停止以防死循环
+                if max_cursor == next_max_cursor and posts_has_more == 1:
+                    utils.logger.warning(f"[DOUYINClient] Cursor did not advance but 'has_more' is still 1. Forcing stop for user {sec_user_id}.")
+                posts_has_more = 0  # 停止后续页面的请求
+                break  # 结束外层循环
+ 
+            filtered_current_batch_videos = []
+            should_stop_fetching_new_pages = False  # 标记是否需要停止外层循环（即停止请求新页面）
+ 
+            for video_item in aweme_list:
+                create_time = video_item.get("create_time")
+                num_videos_processed_this_user += 1 # 无论视频是否符合日期，都增加计数
+ 
+                if create_time is None:
+                    utils.logger.warning(f"[DOUYINClient] Video ID {video_item.get('aweme_id')} has no create_time. Skipping.")
+                    continue
+ 
+                if target_timestamp is not None:
+                    # 如果设置了目标日期，优先按日期过滤
+                    if create_time >= target_timestamp:
+                        # 视频的发布时间在新日期范围内或者就是目标日期
+                        filtered_current_batch_videos.append(video_item)
+                        current_crawl_count += 1
+                        has_seen_new_video_this_user = True # 标记已见过新视频
+                    else:
+                        # 视频的发布时间早于目标日期 (即太旧了)
+                        if has_seen_new_video_this_user or \
+                           num_videos_processed_this_user > STOP_THRESHOLD_FOR_INFERRED_PINNED_VIDEOS:
+                            # 已经见过新视频，并且处理的视频数量超过了预设的置顶视频阈值
+                            # 这意味着当前这个旧视频不是置顶的，且出现在新视频之后，可以停止了。
+                            utils.logger.info(
+                                f"[DOUYINClient] Encountered an old video ({datetime.fromtimestamp(create_time).strftime('%Y-%m-%d %H:%M:%S')}) "
+                                f"after seeing newer videos and processing more than {STOP_THRESHOLD_FOR_INFERRED_PINNED_VIDEOS} videos ({num_videos_processed_this_user} total). "
+                                f"Stopping further page requests for user {sec_user_id}."
+                            )
+                            should_stop_fetching_new_pages = True
+                            break # 跳出内层循环，不再处理当前批次中该视频之后（更旧）的视频
+                        else:
+                            # 即使这个视频早于目标日期，
+                            # 但如果还没见过新视频（可能在处理置顶视频），
+                            # 或者还没处理足够数量的视频来排除置顶视频的可能性，
+                            # 则跳过此视频（不抓取），但不停止爬取进程。
+                            utils.logger.debug(
+                                f"[DOUYINClient] Skipping presumed pinned/early old video {video_item.get('aweme_id')} "
+                                f"(published {datetime.fromtimestamp(create_time).strftime('%Y-%m-%d %H:%M:%S')}) as it is older than target date. "
+                                f"has_seen_new_video_this_user={has_seen_new_video_this_user}, num_videos_processed_this_user={num_videos_processed_this_user}. "
+                                f"Continuing to search for newer videos."
+                            )
+                            continue # 跳过此视频，处理当前批次的下一个视频
+ 
+                else:  # target_timestamp 为 None，表示按数量限制爬取
+                    if max_notes_count > 0 and current_crawl_count >= max_notes_count:
+                        utils.logger.info(f"[DOUYINClient] Reached max notes count limit ({max_notes_count}) during batch processing for user {sec_user_id}. Stopping current batch.")
+                        should_stop_fetching_new_pages = True
+                        break  # 跳出内层循环
+ 
+                    # 如果未达到数量限制，则添加到当前批次结果中
+                    filtered_current_batch_videos.append(video_item)
+                    current_crawl_count += 1
+ 
+            # 对当前批次中筛选出的视频执行回调和结果累加
             if callback:
-                await callback(aweme_list)
-            result.extend(aweme_list)
+                await callback(filtered_current_batch_videos)
+            result.extend(filtered_current_batch_videos)
+ 
+            # 更新游标，准备请求下一页
+            max_cursor = next_max_cursor
+ 
+            # 如果在内层循环中设置了停止标志，则停止外层循环（即停止请求更多页面）
+            if should_stop_fetching_new_pages:
+                posts_has_more = 0  # 标记不再有更多页面
+                break  # 结束外层循环
+ 
+            # 添加一个随机延迟，避免触发限流
+            await asyncio.sleep(random.uniform(self.min_interval_time, self.max_interval_time))
+ 
         return result

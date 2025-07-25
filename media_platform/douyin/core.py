@@ -14,6 +14,7 @@ import os
 import random
 from asyncio import Task
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, date
 
 from playwright.async_api import (
     BrowserContext,
@@ -33,7 +34,7 @@ from var import crawler_type_var, source_keyword_var
 
 from .client import DOUYINClient
 from .exception import DataFetchError
-from .field import PublishTimeType
+from .field import PublishTimeType, SearchSortType
 from .login import DouYinLogin
 
 
@@ -135,6 +136,7 @@ class DouYinCrawler(AbstractCrawler):
                     posts_res = await self.dy_client.search_info_by_keyword(
                         keyword=keyword,
                         offset=page * dy_limit_count - dy_limit_count,
+                        sort_type=SearchSortType(config.SEARCH_SORT_TYPE),
                         publish_time=PublishTimeType(config.PUBLISH_TIME_TYPE),
                         search_id=dy_search_id,
                     )
@@ -241,6 +243,26 @@ class DouYinCrawler(AbstractCrawler):
                     f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}"
                 )
 
+    # async def get_creators_and_videos(self) -> None:
+    #     """
+    #     Get the information and videos of the specified creator
+    #     """
+    #     utils.logger.info(
+    #         "[DouYinCrawler.get_creators_and_videos] Begin get douyin creators"
+    #     )
+    #     for user_id in config.DY_CREATOR_ID_LIST:
+    #         creator_info: Dict = await self.dy_client.get_user_info(user_id)
+    #         if creator_info:
+    #             await douyin_store.save_creator(user_id, creator=creator_info)
+
+    #         # Get all video information of the creator
+    #         all_video_list = await self.dy_client.get_all_user_aweme_posts(
+    #             sec_user_id=user_id, callback=self.fetch_creator_video_detail
+    #         )
+
+    #         video_ids = [video_item.get("aweme_id") for video_item in all_video_list]
+    #         await self.batch_get_note_comments(video_ids)
+
     async def get_creators_and_videos(self) -> None:
         """
         Get the information and videos of the specified creator
@@ -248,18 +270,50 @@ class DouYinCrawler(AbstractCrawler):
         utils.logger.info(
             "[DouYinCrawler.get_creators_and_videos] Begin get douyin creators"
         )
+ 
+        target_timestamp: Optional[int] = None
+        # 默认使用配置中的最大数量限制
+        current_max_notes_count = config.CRAWLER_MAX_CREATOR_NOTES_COUNT
+ 
+        # 优先处理日期限制
+        if config.DY_CREATOR_CRAWL_TARGET_DATE:
+            target_date_str = config.DY_CREATOR_CRAWL_TARGET_DATE.lower()
+            if target_date_str == "today":
+                # 获取今天的零点零分零秒作为目标日期的时间戳
+                target_datetime = datetime.combine(date.today(), datetime.min.time())
+            else:
+                try:
+                    # 解析 YYYY-MM-DD 字符串为 datetime 对象 (该日期的零点零分零秒)
+                    target_datetime = datetime.strptime(target_date_str, "%Y-%m-%d")
+                except ValueError:
+                    utils.logger.error(
+                        f"[DouYinCrawler] Invalid DY_CREATOR_CRAWL_TARGET_DATE format: {config.DY_CREATOR_CRAWL_TARGET_DATE}. Expected YYYY-MM-DD or 'today'."
+                    )
+                    target_datetime = None # 格式错误，则忽略日期限制
+ 
+            if target_datetime:
+                target_timestamp = int(target_datetime.timestamp())
+                current_max_notes_count = 0 # 如果设置了日期限制，禁用数量限制
+                utils.logger.info(f"[DouYinCrawler] Target date set to {target_datetime.strftime('%Y-%m-%d')} (timestamp: {target_timestamp}). Quota limit disabled.")
+            else:
+                utils.logger.warning("[DouYinCrawler] Invalid DY_CREATOR_CRAWL_TARGET_DATE, proceeding without date limit and using quantity limit if set.")
+ 
+ 
         for user_id in config.DY_CREATOR_ID_LIST:
             creator_info: Dict = await self.dy_client.get_user_info(user_id)
             if creator_info:
                 await douyin_store.save_creator(user_id, creator=creator_info)
-
-            # Get all video information of the creator
+ 
+            # Get all video information of the creator with limits
             all_video_list = await self.dy_client.get_all_user_aweme_posts(
-                sec_user_id=user_id, callback=self.fetch_creator_video_detail
+                sec_user_id=user_id,
+                callback=self.fetch_creator_video_detail,
+                max_notes_count=current_max_notes_count, # 传递当前生效的数量限制 (可能为0)
+                target_timestamp=target_timestamp # 传递目标日期时间戳 (可能为 None)
             )
-
+ 
             video_ids = [video_item.get("aweme_id") for video_item in all_video_list]
-            await self.batch_get_note_comments(video_ids)
+            await self.batch_get_note_comments(video_ids)  
 
     async def fetch_creator_video_detail(self, video_list: List[Dict]):
         """
