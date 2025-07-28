@@ -13,11 +13,13 @@ import asyncio
 import copy
 import json
 import urllib.parse
+import random
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, List
 
 import requests
-from playwright.async_api import BrowserContext
+from playwright.async_api import BrowserContext, Page
+import config
 
 from base.base_crawler import AbstractApiClient
 from tools import utils
@@ -44,6 +46,10 @@ class DOUYINClient(AbstractApiClient):
         self._host = "https://www.douyin.com"
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
+        # 解决 AttributeError: 'DOUYINClient' object has no attribute 'min_interval_time'
+        # 使用 config 中的 CRAWLER_MAX_SLEEP_SEC，并设置一个默认的最小间隔时间
+        self.min_interval_time = 1  # 默认最小间隔时间为1秒
+        self.max_interval_time = config.CRAWLER_MAX_SLEEP_SEC # 从 config 获取最大间隔时间
 
     async def __process_req_params(
             self, uri: str, params: Optional[Dict] = None, headers: Optional[Dict] = None,
@@ -307,21 +313,6 @@ class DOUYINClient(AbstractApiClient):
         }
         return await self.get(uri, params)
 
-    # async def get_all_user_aweme_posts(self, sec_user_id: str, callback: Optional[Callable] = None):
-    #     posts_has_more = 1
-    #     max_cursor = ""
-    #     result = []
-    #     while posts_has_more == 1:
-    #         aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
-    #         posts_has_more = aweme_post_res.get("has_more", 0)
-    #         max_cursor = aweme_post_res.get("max_cursor")
-    #         aweme_list = aweme_post_res.get("aweme_list") if aweme_post_res.get("aweme_list") else []
-    #         utils.logger.info(
-    #             f"[DOUYINClient.get_all_user_aweme_posts] got sec_user_id:{sec_user_id} video len : {len(aweme_list)}")
-    #         if callback:
-    #             await callback(aweme_list)
-    #         result.extend(aweme_list)
-    #     return result
     async def get_all_user_aweme_posts(self,
                                        sec_user_id: str,
                                        callback: Optional[Callable] = None,
@@ -342,24 +333,24 @@ class DOUYINClient(AbstractApiClient):
         max_cursor = ""
         result = []  # 累计所有符合条件的视频
         current_crawl_count = 0
- 
+
         # 新增的两个状态变量
         has_seen_new_video_this_user: bool = False  # 标志是否已见过日期符合的视频
         num_videos_processed_this_user: int = 0    # 统计已处理的视频总数（包括跳过的）
         # 假设最多3个置顶视频，设置一个略大于3的阈值，例如4，以确保跳过所有可能的置顶视频。
         STOP_THRESHOLD_FOR_INFERRED_PINNED_VIDEOS: int = 4
- 
+
         while posts_has_more == 1:
             # 只有当没有设置 target_timestamp 时，才检查 max_notes_count
             if target_timestamp is None and max_notes_count > 0 and current_crawl_count >= max_notes_count:
                 utils.logger.info(f"[DOUYINClient] Reached max notes count limit ({max_notes_count}) for user {sec_user_id}. Stopping new requests.")
                 break
- 
+
             aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
             posts_has_more = aweme_post_res.get("has_more", 0)
             next_max_cursor = aweme_post_res.get("max_cursor")
             aweme_list = aweme_post_res.get("aweme_list") if aweme_post_res.get("aweme_list") else []
- 
+
             if not aweme_list:
                 utils.logger.info(f"[DOUYINClient] No more aweme_list for user {sec_user_id} in current response.")
                 # 如果当前批次没有视频，但 has_more 仍为1，且游标未变，则可能已无更多内容，强制停止以防死循环
@@ -367,18 +358,18 @@ class DOUYINClient(AbstractApiClient):
                     utils.logger.warning(f"[DOUYINClient] Cursor did not advance but 'has_more' is still 1. Forcing stop for user {sec_user_id}.")
                 posts_has_more = 0  # 停止后续页面的请求
                 break  # 结束外层循环
- 
+
             filtered_current_batch_videos = []
             should_stop_fetching_new_pages = False  # 标记是否需要停止外层循环（即停止请求新页面）
- 
+
             for video_item in aweme_list:
                 create_time = video_item.get("create_time")
                 num_videos_processed_this_user += 1 # 无论视频是否符合日期，都增加计数
- 
+
                 if create_time is None:
                     utils.logger.warning(f"[DOUYINClient] Video ID {video_item.get('aweme_id')} has no create_time. Skipping.")
                     continue
- 
+
                 if target_timestamp is not None:
                     # 如果设置了目标日期，优先按日期过滤
                     if create_time >= target_timestamp:
@@ -388,7 +379,7 @@ class DOUYINClient(AbstractApiClient):
                         has_seen_new_video_this_user = True # 标记已见过新视频
                     else:
                         # 视频的发布时间早于目标日期 (即太旧了)
-                        if has_seen_new_video_this_user or \
+                        if has_seen_new_video_this_user and \
                            num_videos_processed_this_user > STOP_THRESHOLD_FOR_INFERRED_PINNED_VIDEOS:
                             # 已经见过新视频，并且处理的视频数量超过了预设的置顶视频阈值
                             # 这意味着当前这个旧视频不是置顶的，且出现在新视频之后，可以停止了。
@@ -411,31 +402,31 @@ class DOUYINClient(AbstractApiClient):
                                 f"Continuing to search for newer videos."
                             )
                             continue # 跳过此视频，处理当前批次的下一个视频
- 
+
                 else:  # target_timestamp 为 None，表示按数量限制爬取
                     if max_notes_count > 0 and current_crawl_count >= max_notes_count:
                         utils.logger.info(f"[DOUYINClient] Reached max notes count limit ({max_notes_count}) during batch processing for user {sec_user_id}. Stopping current batch.")
                         should_stop_fetching_new_pages = True
                         break  # 跳出内层循环
- 
+
                     # 如果未达到数量限制，则添加到当前批次结果中
                     filtered_current_batch_videos.append(video_item)
                     current_crawl_count += 1
- 
+
             # 对当前批次中筛选出的视频执行回调和结果累加
             if callback:
                 await callback(filtered_current_batch_videos)
             result.extend(filtered_current_batch_videos)
- 
+
             # 更新游标，准备请求下一页
             max_cursor = next_max_cursor
- 
+
             # 如果在内层循环中设置了停止标志，则停止外层循环（即停止请求更多页面）
             if should_stop_fetching_new_pages:
                 posts_has_more = 0  # 标记不再有更多页面
                 break  # 结束外层循环
- 
+
             # 添加一个随机延迟，避免触发限流
             await asyncio.sleep(random.uniform(self.min_interval_time, self.max_interval_time))
- 
+
         return result
