@@ -106,9 +106,11 @@ class MediacrawlerApiRunner:
         try:
             crawler_class = self.CRAWLERS.get(platform)
             if not crawler_class:
-                raise ValueError(f"Invalid Media Platform: {platform}")
+                supported_platforms = ", ".join(self.CRAWLERS.keys())
+                raise ValueError(f"无效的媒体平台: {platform}。支持的平台有: {supported_platforms}")
             
-            self._crawler = crawler_class()
+            # 类型断言，帮助IDE识别 _crawler 的具体类型
+            self._crawler: AbstractCrawler = crawler_class()
             print(f"Starting crawl for platform: {platform}, type: {crawl_type}...")
             await self._crawler.start()
             print("Crawl finished.")

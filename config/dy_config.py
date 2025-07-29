@@ -51,4 +51,4 @@ CRAWLER_MAX_CREATOR_NOTES_COUNT = 15
 # 格式为 'YYYY-MM-DD' (例如 '2025-07-25') 或 'today'。留空表示不限制日期。
 # 如果设置此项，将优先于CRAWLER_MAX_CREATOR_NOTES_COUNT。
 # 程序会检测到非置顶视频发布时间早于该日期时，停止请求新的页面。置顶视频不受此停止条件限制。
-DY_CREATOR_CRAWL_TARGET_DATE = "today" # 默认不限制日期
+DY_CREATOR_CRAWL_TARGET_DATE = "2025-07-28" # 默认不限制日期

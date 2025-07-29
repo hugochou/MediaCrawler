@@ -16,7 +16,10 @@ from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.zhihu import ZhihuCrawler
 
-# 平台简称到爬虫类的映射
+# PLATFORM_CRAWLERS_MAP:
+# 将平台简称（如 "xhs", "dy"）映射到对应的爬虫类。
+# 这个映射主要用于 mediacrawler_runner.py 中，根据配置的平台动态选择并实例化正确的爬虫。
+# 这种设计提高了系统的可扩展性，使得添加新平台时无需修改核心运行逻辑。
 PLATFORM_CRAWLERS_MAP = {
     "xhs": XiaoHongShuCrawler,
     "dy": DouYinCrawler,
@@ -27,7 +30,10 @@ PLATFORM_CRAWLERS_MAP = {
     "zhihu": ZhihuCrawler,
 }
 
-# 平台简称到模块名称的映射
+# PLATFORM_MODULE_MAP:
+# 将平台简称映射到对应的 Python 模块名称字符串。
+# 例如，"dy" 映射到 "douyin"，这意味着抖音相关的代码通常位于 `media_platform/douyin` 或 `downloader/douyin_downloader.py` 等模块中。
+# 这个映射主要用于动态导入模块，例如在 video_download_runner.py 中根据平台名称动态加载下载器模块。
 PLATFORM_MODULE_MAP = {
     "xhs": "xhs",
     "dy": "douyin",
@@ -38,7 +44,10 @@ PLATFORM_MODULE_MAP = {
     "zhihu": "zhihu",
 }
 
-# 平台简称到基础类名称的映射 (用于动态拼接 Login/Downloader 等)
+# PLATFORM_CLASS_NAME_MAP:
+# 将平台简称映射到对应的主要类名基础字符串。
+# 例如，"dy" 映射到 "Douyin"，这通常用于构建完整的类名，如 "DouyinDownloader" 或 "DouyinClient"。
+# 这个映射与 PLATFORM_MODULE_MAP 结合使用，在动态加载时用于通过字符串名称获取模块内的具体类。
 PLATFORM_CLASS_NAME_MAP = {
     "xhs": "XiaoHongShu",
     "dy": "Douyin",
