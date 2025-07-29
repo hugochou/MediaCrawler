@@ -4,32 +4,20 @@
 import asyncio
 import sys
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 # 导入 MediaCrawler 的核心组件
 # 确保此脚本在 MediaCrawler 项目根目录中运行，以便正确导入相对路径的模块
 import config # 导入 config 模块 (包含 base_config)
 from base.base_crawler import AbstractCrawler
-from media_platform.bilibili import BilibiliCrawler
-from media_platform.douyin import DouYinCrawler
-from media_platform.kuaishou import KuaishouCrawler
-from media_platform.tieba import TieBaCrawler
-from media_platform.weibo import WeiboCrawler
-from media_platform.xhs import XiaoHongShuCrawler
-from media_platform.zhihu import ZhihuCrawler
+from media_platform.douyin.client import DOUYINClient
 import db
+from tools import utils
+from constant.platform_map import PLATFORM_CRAWLERS_MAP # 导入平台爬虫映射
 
 # 定义一个类来管理爬虫的创建和运行，类似于 main.py 中的 CrawlerFactory
 class MediacrawlerApiRunner:
-    CRAWLERS = {
-        "xhs": XiaoHongShuCrawler,
-        "dy": DouYinCrawler,
-        "ks": KuaishouCrawler,
-        "bili": BilibiliCrawler,
-        "wb": WeiboCrawler,
-        "tieba": TieBaCrawler,
-        "zhihu": ZhihuCrawler,
-    }
+    CRAWLERS = PLATFORM_CRAWLERS_MAP
 
     def __init__(self):
         self._crawler: Optional[AbstractCrawler] = None
