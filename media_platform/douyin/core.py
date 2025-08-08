@@ -36,10 +36,28 @@ from .client import DOUYINClient
 from .exception import DataFetchError
 from .field import PublishTimeType, SearchSortType
 from .login import DouYinLogin
-from tools.client_factory import create_douyin_client # 导入新的通用方法
 
 
 class DouYinCrawler(AbstractCrawler):
+    async def create_douyin_client(self, httpx_proxy: Optional[str]) -> DOUYINClient:
+        """Create douyin client"""
+        cookie_str, cookie_dict = utils.convert_cookies(await self.browser_context.cookies())  # type: ignore
+        douyin_client = DOUYINClient(
+            proxies=httpx_proxy,
+            headers={
+                "User-Agent": await self.context_page.evaluate(
+                    "() => navigator.userAgent"
+                ),
+                "Cookie": cookie_str,
+                "Host": "www.douyin.com",
+                "Origin": "https://www.douyin.com/",
+                "Referer": "https://www.douyin.com/",
+                "Content-Type": "application/json;charset=UTF-8",
+            },
+            playwright_page=self.context_page,
+            cookie_dict=cookie_dict,
+        )
+        return douyin_client
     context_page: Page
     dy_client: DOUYINClient
     browser_context: BrowserContext
@@ -85,12 +103,7 @@ class DouYinCrawler(AbstractCrawler):
             self.context_page = await self.browser_context.new_page()
             await self.context_page.goto(self.index_url)
 
-            # 使用通用方法创建 DOUYINClient 实例
-            self.dy_client = await create_douyin_client(
-                browser_context=self.browser_context,
-                context_page=self.context_page,
-                httpx_proxy=httpx_proxy_format
-            )
+            self.dy_client = await self.create_douyin_client(httpx_proxy_format)
             if not await self.dy_client.pong(browser_context=self.browser_context):
                 login_obj = DouYinLogin(
                     login_type=config.LOGIN_TYPE,

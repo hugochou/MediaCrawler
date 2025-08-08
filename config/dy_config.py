@@ -45,10 +45,10 @@ PUBLISH_TIME_TYPE = 0
 
 # 抖音创作者模式下控制爬取数量
 # 限制单个创作者爬取的最大视频数量，0表示不限制，如果您想限制100个视频，则设置为100
-CRAWLER_MAX_CREATOR_NOTES_COUNT = 15
+CRAWLER_MAX_CREATOR_NOTES_COUNT = 30
 
 # 指定只爬取该日期（含）之后的视频。
 # 格式为 'YYYY-MM-DD' (例如 '2025-07-25') 或 'today'。留空表示不限制日期。
 # 如果设置此项，将优先于CRAWLER_MAX_CREATOR_NOTES_COUNT。
 # 程序会检测到非置顶视频发布时间早于该日期时，停止请求新的页面。置顶视频不受此停止条件限制。
-DY_CREATOR_CRAWL_TARGET_DATE = "2025-07-28" # 默认不限制日期
+DY_CREATOR_CRAWL_TARGET_DATE = "2025-08-07" # 默认不限制日期
